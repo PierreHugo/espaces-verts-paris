@@ -30,7 +30,7 @@ espaces-verts-paris/
 
 ### 🔸 1. Cloner le projet
 ```bash
-git clone <url-du-repo>
+git clone https://github.com/PierreHugo/espaces-verts-paris
 cd espaces-verts-paris
 ```
 
