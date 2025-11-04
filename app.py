@@ -11,6 +11,7 @@ st.set_page_config(
 
 @st.cache_data
 def load_data():
+    # CSV déjà nettoyé (9999 -> NaN)
     return pd.read_csv("src/espaces_verts_normalized.csv", sep=";")
 
 df = load_data()
@@ -25,91 +26,155 @@ df["arrondissement"] = (
     .str[-2:]
 )
 
+CP_OUTSIDE = {
+    "92220": "Bagneux (92)",
+    "93210": "Saint-Denis (93)",
+    "93400": "Saint-Ouen (93)",
+    "93500": "Pantin (93)",
+    "94200": "Ivry-sur-Seine (94)",
+    "94300": "Vincennes (94)",
+    "94320": "Thiais (94)",
+}
+
+def format_arrondissement_row(row):
+    cp = str(row.get("code_postal", "")).strip()
+    arr = str(row.get("arrondissement", "")).strip()
+
+    if cp in CP_OUTSIDE:
+        return CP_OUTSIDE[cp]
+
+    if cp.startswith("75") and len(arr) == 2 and arr.isdigit():
+        n = int(arr)
+        return "1er" if n == 1 else f"{n}e"
+
+    # fallback commune
+    if "commune" in row and str(row["commune"]).strip().lower() not in ["", "nan", "none"]:
+        return str(row["commune"]).strip()
+
+    return cp
+
+df["arrondissement_affiche"] = df.apply(format_arrondissement_row, axis=1)
+
 st.title("🌿 Espaces verts à Paris")
 
 # =========================
-# 🔽 FILTRES
+# ONGlets principaux
 # =========================
-st.subheader("Filtres")
+tab_carte_typo, tab_carte_hist, tab_data, tab_stats = st.tabs(
+    ["🧭 Carte typologique", "📜 Carte historique", "📋 Données", "📈 Statistiques"]
+)
 
-cats = sorted(df["categorie"].dropna().unique())
-arrs = sorted(df["arrondissement"].dropna().unique())
+# ---------------------------------------------------------------------
+# 1. CARTE TYPOLOGIQUE (avec filtres + KPI)
+# ---------------------------------------------------------------------
+with tab_carte_typo:
+    st.subheader("🧭 Carte typologique")
 
-col1, col2, col3, col4 = st.columns(4)
+    # ===== FILTRES =====
+    st.markdown("### Filtres")
 
-with col1:
-    categories_sel = st.multiselect(
-        "Catégories",
-        options=cats,
-        default=[],
-        placeholder="Choisir une ou plusieurs catégories",
+    cats = sorted(df["categorie"].dropna().unique())
+   
+    # 1. on récupère tous les arrondissements affichés uniques
+    arr_unique = df[["arrondissement_affiche", "code_postal"]].drop_duplicates()
+
+    # 2. on sépare Paris (75xxx) du reste
+    paris = arr_unique[arr_unique["code_postal"].astype(str).str.startswith("75")]
+    hors_paris = arr_unique[~arr_unique["code_postal"].astype(str).str.startswith("75")]
+
+    # 3. ordre pour Paris : 1er, 2e, 3e, ..., 20e
+    paris_order = []
+    for i in range(1, 21):
+        if i == 1:
+            paris_order.append("1er")
+        else:
+            paris_order.append(f"{i}e")
+
+    # on garde seulement ceux qui existent vraiment dans le df
+    paris_sorted = [a for a in paris_order if a in set(paris["arrondissement_affiche"])]
+
+    # 4. pour le hors Paris : on trie par code postal (donc 92..., puis 93..., puis 94...)
+    hors_paris_sorted = (
+        hors_paris.sort_values("code_postal")["arrondissement_affiche"].tolist()
     )
 
-with col2:
-    arrondissements_sel = st.multiselect(
-        "Arrondissement",
-        options=arrs,
-        default=[],
-        placeholder="Ex: 01, 08, 20…",
-    )
+    # 5. on concatène
+    arrs = paris_sorted + hors_paris_sorted
 
-with col3:
-    h24_sel = st.selectbox(
-        "Ouverture 24/24",
-        options=["Tous", "Oui", "Non"],
-        index=0,
-    )
 
-with col4:
-    cloture_sel = st.selectbox(
-        "Clôturé",
-        options=["Tous", "Oui", "Non"],
-        index=0,
-    )
+    col1, col2, col3, col4 = st.columns(4)
 
-# ======================
-# Application des filtres
-# ======================
-filtered_df = df.copy()
+    with col1:
+        categories_sel = st.multiselect(
+            "Catégories",
+            options=cats,
+            default=[],
+            placeholder="Choisir une ou plusieurs catégories",
+        )
 
-if categories_sel:
-    filtered_df = filtered_df[filtered_df["categorie"].isin(categories_sel)]
+    with col2:
+        arrondissements_sel = st.multiselect(
+            "Arrondissement (technique)",
+            options=arrs,
+            default=[],
+            placeholder="01, 02, ...",
+        )
 
-if arrondissements_sel:
-    filtered_df = filtered_df[filtered_df["arrondissement"].isin(arrondissements_sel)]
+    with col3:
+        h24_sel = st.selectbox(
+            "Ouverture 24/24",
+            options=["Tous", "Oui", "Non"],
+            index=0,
+        )
 
-if h24_sel != "Tous" and "ouverture_24h" in filtered_df.columns:
-    want_open = (h24_sel == "Oui")
-    filtered_df = filtered_df[filtered_df["ouverture_24h"] == want_open]
+    with col4:
+        cloture_sel = st.selectbox(
+            "Clôturé",
+            options=["Tous", "Oui", "Non"],
+            index=0,
+        )
 
-if cloture_sel != "Tous" and "presence_cloture" in filtered_df.columns:
-    want_cloture = (cloture_sel == "Oui")
-    filtered_df = filtered_df[filtered_df["presence_cloture"] == want_cloture]
+    # ===== Application des filtres =====
+    filtered_df = df.copy()
 
-st.caption(f"{len(filtered_df)} ligne(s) après filtrage.")
+    if categories_sel:
+        filtered_df = filtered_df[filtered_df["categorie"].isin(categories_sel)]
+    # si aucune catégorie sélectionnée → on garde tout
+    else:
+        filtered_df = filtered_df.copy()
 
-# =========================
-# 📊 KPI
-# =========================
-k1, k2, k3 = st.columns(3)
-k1.metric("Espaces affichés", len(filtered_df))
-k2.metric("Catégories sélectionnées", len(categories_sel))
-if "surface_totale_reelle_m2" in filtered_df.columns:
-    total_surface = int(filtered_df["surface_totale_reelle_m2"].sum())
-    total_surface_fmt = f"{total_surface:,}".replace(",", " ")
-    k3.metric("Surface totale (m²)", total_surface_fmt)
-else:
-    k3.metric("Surface totale (m²)", "—")
 
-# =========================
-# 🗂️ ONGlets
-# =========================
-tab_map, tab_data, tab_charts = st.tabs(["🗺️ Carte", "📋 Données", "📈 Graphiques"])
+    if arrondissements_sel:
+        filtered_df = filtered_df[filtered_df["arrondissement_affiche"].isin(arrondissements_sel)]
 
-# --- CARTE ---
-with tab_map:
-    st.subheader("🗺️ Carte des espaces verts (polygones)")
+    if h24_sel != "Tous" and "ouverture_24h" in filtered_df.columns:
+        want_open = (h24_sel == "Oui")
+        filtered_df = filtered_df[filtered_df["ouverture_24h"] == want_open]
 
+    if cloture_sel != "Tous" and "presence_cloture" in filtered_df.columns:
+        want_cloture = (cloture_sel == "Oui")
+        filtered_df = filtered_df[filtered_df["presence_cloture"] == want_cloture]
+
+    st.caption(f"{len(filtered_df)} ligne(s) après filtrage.")
+
+    # ===== KPI =====
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Espaces affichés", len(filtered_df))
+    k2.metric("Catégories sélectionnées", len(categories_sel) if categories_sel else len(cats))
+
+    if "surface_totale_reelle_m2" in filtered_df.columns:
+        total_surface = filtered_df["surface_totale_reelle_m2"].sum(min_count=1)
+        # s'il y a encore des NaN -> ignore
+        if pd.isna(total_surface):
+            total_surface_fmt = "—"
+        else:
+            total_surface = int(total_surface)
+            total_surface_fmt = f"{total_surface:,}".replace(",", " ")
+        k3.metric("Surface totale (m²)", total_surface_fmt)
+    else:
+        k3.metric("Surface totale (m²)", "—")
+
+    # ===== Carte typologique =====
     geo_df = filtered_df[filtered_df["geo_shape"].notna()].copy()
 
     def parse_geojson(x):
@@ -178,13 +243,136 @@ with tab_map:
 
         st.pydeck_chart(r)
 
-# --- DONNÉES ---
+# ---------------------------------------------------------------------
+# 2. CARTE HISTORIQUE
+# ---------------------------------------------------------------------
+with tab_carte_hist:
+    st.subheader("📜 Carte historique")
+
+    if "annee_ouverture" not in df.columns:
+        st.warning("Pas de colonne 'annee_ouverture' dans les données.")
+    else:
+        years_series = pd.to_numeric(df["annee_ouverture"], errors="coerce").dropna()
+        if years_series.empty:
+            st.warning("Aucune année d'ouverture renseignée.")
+        else:
+            min_year = int(years_series.min())
+            max_year = int(years_series.max())
+
+            selected_year = st.slider(
+                "Sélectionner une année",
+                min_value=min_year,
+                max_value=max_year,
+                value=max_year,
+                step=1,
+                label_visibility="collapsed",
+            )
+
+            left, right = st.columns([3, 1])
+
+            with left:
+                st.markdown(
+                    f"""
+                    <h3 style="margin-top:0;">
+                        Depuis l'année 
+                        <span style="font-size:2.8rem; font-weight:700; color:#2ecc71;">
+                            {selected_year}
+                        </span>
+                    </h3>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            with right:
+                # tu mets ton image ici
+                st.image("src/assets/louis.png", use_column_width=True)
+                # ou une URL :
+                # st.image("https://…/monimage.png", use_column_width=True)
+
+
+
+            # filtrage par année
+            year_col = pd.to_numeric(df["annee_ouverture"], errors="coerce")
+            mask_year = year_col.notna() & (year_col <= selected_year)
+            hist_df = df[mask_year].copy()
+
+            hist_geo = hist_df[hist_df["geo_shape"].notna()].copy()
+            hist_geo["geometry"] = hist_geo["geo_shape"].apply(lambda x: json.loads(x) if pd.notna(x) else None)
+            hist_geo = hist_geo[hist_geo["geometry"].notna()]
+
+            nb_ev = len(hist_geo)
+            st.markdown(f"**{nb_ev} espaces verts étaient déjà ouverts à cette date.**")
+
+
+            if hist_geo.empty:
+                st.warning("Aucun espace à afficher pour cette année.")
+            else:
+                color_map = {
+                    "Bois": [0, 100, 0, 120],
+                    "Parc": [46, 204, 113, 120],
+                    "Square": [52, 152, 219, 120],
+                    "Jardin": [241, 196, 15, 120],
+                    "Jardin partage": [230, 126, 34, 120],
+                    "Pelouse": [39, 174, 96, 120],
+                    "Mail": [142, 68, 173, 120],
+                    "Promenade": [26, 188, 156, 120],
+                    "Terrain de boules": [192, 57, 43, 120],
+                    "Forêt urbaine": [0, 128, 0, 120],
+                    "Ile": [52, 73, 94, 120],
+                    "Cimetière": [149, 165, 166, 120],
+                }
+
+                features = []
+                for _, row in hist_geo.iterrows():
+                    fill = color_map.get(row["categorie"], [127, 140, 141, 120])
+                    year_val = pd.to_numeric(row.get("annee_ouverture", None), errors="coerce")
+                    year_val = int(year_val) if pd.notna(year_val) else ""
+                    features.append({
+                        "type": "Feature",
+                        "properties": {
+                            "nom": row["nom"],
+                            "categorie": row["categorie"],
+                            "annee_ouverture": year_val,
+                            "fill_color": fill,
+                        },
+                        "geometry": row["geometry"],
+                    })
+
+                geojson_obj = {"type": "FeatureCollection", "features": features}
+
+                geojson_layer = pdk.Layer(
+                    "GeoJsonLayer",
+                    data=geojson_obj,
+                    get_fill_color="properties.fill_color",
+                    get_line_color=[0, 0, 0],
+                    line_width_min_pixels=1,
+                    pickable=True,
+                )
+
+                view_state = pdk.ViewState(
+                    latitude=48.8566,
+                    longitude=2.3522,
+                    zoom=11,
+                    pitch=0,
+                )
+
+                r = pdk.Deck(
+                    layers=[geojson_layer],
+                    initial_view_state=view_state,
+                    tooltip={"text": "{nom}\n{categorie}\nOuvert en {annee_ouverture}"},
+                )
+
+                st.pydeck_chart(r)
+
+# ---------------------------------------------------------------------
+# 3. ONGLET DONNÉES
+# ---------------------------------------------------------------------
 with tab_data:
     st.subheader("📋 Données")
 
-    view_df = filtered_df.copy()
+    view_df = df.copy()
 
-    # ----- colonne surface -----
+    # surface fusionnée
     surface = None
     if "surface_totale_reelle_m2" in view_df.columns:
         surface = view_df["surface_totale_reelle_m2"]
@@ -200,7 +388,6 @@ with tab_data:
 
     view_df["surface"] = surface if surface is not None else None
 
-    # ----- colonne surface affichée (espaces entre milliers) -----
     def format_surface(x):
         if pd.isna(x):
             return ""
@@ -212,11 +399,9 @@ with tab_data:
 
     view_df["surface_affichee"] = view_df["surface"].apply(format_surface)
 
-    # ----- colonne adresse -----
+    # adresse
     addr_cols = [c for c in view_df.columns if "adresse" in c.lower()]
     if addr_cols:
-        addr_df = view_df[addr_cols]
-
         def join_addr(row):
             parts = []
             for v in row.tolist():
@@ -228,31 +413,28 @@ with tab_data:
                 parts.append(s)
             joined = " ".join(parts)
             return " ".join(joined.split())
-
-        view_df["adresse"] = addr_df.apply(join_addr, axis=1)
+        view_df["adresse"] = view_df[addr_cols].apply(join_addr, axis=1)
     else:
         view_df["adresse"] = view_df.get("code_postal", "").astype(str)
 
-    # ----- arrondissement affiché -----
+    # arrondissement affiché
     CP_OUTSIDE = {
-        "92220": "Bagneux (92)",
-        "93210": "Saint-Denis (93)",
-        "93400": "Saint-Ouen (93)",
-        "93500": "Pantin (93)",
-        "94200": "Ivry-sur-Seine (94)",
-        "94300": "Vincennes (94)",
-        "94320": "Thiais (94)",
+        "92220": "Bagneux",
+        "93210": "Saint-Denis",
+        "93400": "Saint-Ouen",
+        "93500": "Pantin",
+        "94200": "Ivry-sur-Seine",
+        "94300": "Vincennes",
+        "94320": "Thiais",
     }
 
     def format_arrondissement(row):
         cp = str(row.get("code_postal", "")).strip()
         arr = str(row.get("arrondissement", "")).strip()
 
-        # si c'est un des cas hors Paris identifiés
         if cp in CP_OUTSIDE:
             return CP_OUTSIDE[cp]
 
-        # si c'est Paris
         if cp.startswith("75") and len(arr) == 2 and arr.isdigit():
             n = int(arr)
             if n == 1:
@@ -260,24 +442,20 @@ with tab_data:
             else:
                 return f"{n}e"
 
-        # fallback: commune si dispo
         if "commune" in row and str(row["commune"]).strip().lower() not in ["", "nan", "none"]:
             return str(row["commune"]).strip()
 
-        # dernier fallback: code postal complet
         return cp
 
     view_df["arrondissement_affiche"] = view_df.apply(format_arrondissement, axis=1)
 
-    # ----- colonnes à afficher (ordre demandé) -----
     cols_to_show = [
-        "nom",                     # Lieu
-        "categorie",               # Catégorie
-        "adresse",                 # Adresse
-        "arrondissement_affiche",  # Arrondissement (ou ville)
-        "surface_affichee",        # Surface (m²)
+        "nom",
+        "categorie",
+        "adresse",
+        "arrondissement_affiche",
+        "surface_affichee",
     ]
-
     if "annee_ouverture" in view_df.columns:
         cols_to_show.append("annee_ouverture")
     if "presence_cloture" in view_df.columns:
@@ -285,11 +463,9 @@ with tab_data:
     if "ouverture_24h" in view_df.columns:
         cols_to_show.append("ouverture_24h")
 
-    # on vire les colonnes d'identifiant de l'affichage
     id_cols = [c for c in view_df.columns if c.lower() in ["id", "identifiant", "index"]]
     cols_to_show = [c for c in cols_to_show if c not in id_cols]
 
-    # ---- alias d'affichage ----
     rename_display = {
         "nom": "Lieu",
         "categorie": "Catégorie",
@@ -309,13 +485,12 @@ with tab_data:
 
     st.dataframe(df_display, width="stretch", hide_index=True)
 
-    # export CSV (surface numérique + arrondissement technique)
     export_cols = [
         "nom",
         "categorie",
         "adresse",
-        "arrondissement",        # info brute
-        "code_postal",           # utile pour retrouver la ville
+        "arrondissement",
+        "code_postal",
         "surface",
     ]
     if "annee_ouverture" in view_df.columns:
@@ -326,20 +501,22 @@ with tab_data:
         export_cols.append("ouverture_24h")
 
     st.download_button(
-        "⬇️ Télécharger les données filtrées (CSV)",
+        "⬇️ Télécharger les données (CSV)",
         data=view_df[export_cols].to_csv(index=False, sep=";"),
-        file_name="espaces_verts_filtres.csv",
+        file_name="espaces_verts.csv",
         mime="text/csv",
     )
 
-# --- GRAPHIQUES ---
-with tab_charts:
-    st.subheader("📈 Répartition par catégorie")
+# ---------------------------------------------------------------------
+# 4. ONGLET STATISTIQUES
+# ---------------------------------------------------------------------
+with tab_stats:
+    st.subheader("📈 Statistiques")
     counts = (
-        filtered_df["categorie"]
+        df["categorie"]
         .value_counts()
-        .rename_axis("categorie")
-        .reset_index(name="nb")
+        .rename_axis("Catégorie")
+        .reset_index(name="Nb")
     )
-    st.bar_chart(counts, x="categorie", y="nb")
-    st.caption("On pourra remplacer ce chart par Altair pour un rendu plus clean.")
+    st.bar_chart(counts, x="Catégorie", y="Nb")
+    st.caption("Répartition simple par catégorie. On pourra ajouter la répartition par année / arrondissement.")

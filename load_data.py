@@ -81,7 +81,7 @@ def normalize_yes_no(val):
     if pd.isna(val):
         return pd.NA
     v = str(val).strip().lower()
-    if v in ("oui", "o", "yes", "y"):
+    if v in ("oui", "o", "yes", "y", "true"):
         return True
     if v in ("non", "n", "no", "f", "false"):
         return False
@@ -93,7 +93,30 @@ if "presence_cloture" in df.columns:
 if "ouverture_24h" in df.columns:
     df["ouverture_24h"] = df["ouverture_24h"].apply(normalize_yes_no)
 
-# 4. recaster quelques colonnes numériques
+# 4. enlever les années "9999" qui sont des placeholders
+year_like_cols = [
+    "annee_ouverture",
+    "annee_renovation",
+    "annee_changement_nom",
+]
+for col in year_like_cols:
+    if col in df.columns:
+        # on met en numérique pour choper les 9999 même s'ils sont en str
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df.loc[df[col] == 9999, col] = pd.NA
+
+# 4bis. si jamais surface est 9999 (ça peut arriver), on les vire aussi
+surface_like_cols = [
+    "surface_totale_reelle_m2",
+    "surface_calculee_m2",
+    "surface_horticole_m2",
+]
+for col in surface_like_cols:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df.loc[df[col] == 9999, col] = pd.NA
+
+# 5. recaster quelques colonnes numériques
 for col in [
     "id_espace_vert",
     "adresse_numero",
@@ -106,7 +129,7 @@ for col in [
     if col in df.columns:
         df[col] = df[col].astype("Int64")
 
-# 5. filtrer les catégories pertinentes
+# 6. filtrer les catégories pertinentes
 categories_a_garder = [
     "Bois",
     "Parc",
@@ -129,13 +152,18 @@ nb_filtre = len(df)
 print(f"✅ Filtrage appliqué : {nb_filtre} / {nb_total} lignes conservées ({nb_filtre/nb_total:.1%})")
 print("📚 Catégories conservées :", ", ".join(categories_a_garder))
 
-# 6. corriger les nb_entites incohérents (0, NaN -> 1)
+# 7. corriger les nb_entites incohérents (0, NaN -> 1)
 if "nb_entites" in df.columns:
     df["nb_entites"] = df["nb_entites"].apply(
         lambda x: 1 if pd.isna(x) or x <= 0 else x
     )
 
-# 7. sauvegarder
+# 8. compter les cellules vides / NaN par colonne (après nettoyage des 9999)
+print("\n=== Valeurs manquantes après nettoyage (y compris 9999) ===")
+na_counts = df.isna().sum().sort_values(ascending=False)
+print(na_counts)
+
+# 9. sauvegarder
 df.to_csv(OUTPUT_PATH, index=False, sep=";", encoding="utf-8")
 
 print("✅ Fichier nettoyé écrit dans :", OUTPUT_PATH)
