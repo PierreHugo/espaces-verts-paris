@@ -2,6 +2,11 @@ import streamlit as st
 import pandas as pd
 import json
 import pydeck as pdk
+import base64
+
+def img_to_base64(path):
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
 
 st.set_page_config(
     page_title="Espaces verts à Paris",
@@ -246,6 +251,7 @@ with tab_carte_typo:
 # ---------------------------------------------------------------------
 # 2. CARTE HISTORIQUE
 # ---------------------------------------------------------------------
+
 with tab_carte_hist:
     st.subheader("📜 Carte historique")
 
@@ -259,6 +265,37 @@ with tab_carte_hist:
             min_year = int(years_series.min())
             max_year = int(years_series.max())
 
+            st.markdown("""
+                <style>
+                /* Centrage + largeur contrôlée */
+                div[data-baseweb="slider"] {
+                    width: 90% !important;   /* 👈 réduis la longueur (100% par défaut) */
+                    margin: 0 auto;          /* centre horizontalement */
+                }
+
+                /* Barre de fond (inactive) */
+                .stSlider [role="presentation"] > div:first-child {
+                    height: 0.4rem !important;  /* 👈 épaisseur du fond */
+                    background-color: rgba(255, 255, 255, 0.15);
+                }
+
+                /* Barre active (valeur sélectionnée) */
+                .stSlider [role="presentation"] > div:nth-child(2) {
+                    height: 0.4rem !important;
+                    background-color: #2ecc71 !important;  /* 👈 vert */
+                }
+
+                /* Bouton circulaire */
+                .stSlider [role="slider"] {
+                    width: 1.2rem !important;
+                    height: 1.2rem !important;
+                    background-color: #2ecc71 !important;
+                    border: 2px solid white !important;
+                }
+                </style>
+            """, unsafe_allow_html=True)
+
+            # après selected_year = st.slider(...)
             selected_year = st.slider(
                 "Sélectionner une année",
                 min_value=min_year,
@@ -268,14 +305,45 @@ with tab_carte_hist:
                 label_visibility="collapsed",
             )
 
-            left, right = st.columns([3, 1])
+            # fonction de mapping année -> image
+            def get_image_for_year(year: int) -> str:
+                # if year < 1700:
+                #     return "src/assets/avant-1700.jpg"
+                # elif year < 1789:
+                #     return "src/assets/ancien-regime.jpg"
+                # elif year < 1850:
+                #     return "src/assets/revolution.jpg"
+                # elif year < 1900:
+                #     return "src/assets/haussmann.jpg"
+                # else:
+                #     return "src/assets/paris-moderne.jpg"
+                
+                return "src/assets/rev.jpg"
 
-            with left:
+            image_path = get_image_for_year(selected_year)
+
+
+            # filtrage une seule fois
+            year_col = pd.to_numeric(df["annee_ouverture"], errors="coerce")
+            mask_year = year_col.notna() & (year_col <= selected_year)
+            hist_df = df[mask_year].copy()
+            hist_geo = hist_df[hist_df["geo_shape"].notna()].copy()
+            hist_geo["geometry"] = hist_geo["geo_shape"].apply(
+                lambda x: json.loads(x) if pd.notna(x) else None
+            )
+            hist_geo = hist_geo[hist_geo["geometry"].notna()]
+            nb_ev = len(hist_geo)
+
+            # 🟩 mise en page 2 colonnes pour tout le reste
+            left_col, right_col = st.columns([1, 2])
+
+            with left_col:
+                # titre centré
                 st.markdown(
                     f"""
-                    <h3 style="margin-top:0;">
-                        Depuis l'année 
-                        <span style="font-size:2.8rem; font-weight:700; color:#2ecc71;">
+                    <h3 style="text-align:center; margin-top:0;">
+                        En
+                        <span style="font-size:2.6rem; font-weight:1000; color:#2ecc71;">
                             {selected_year}
                         </span>
                     </h3>
@@ -283,86 +351,139 @@ with tab_carte_hist:
                     unsafe_allow_html=True,
                 )
 
-            with right:
-                # tu mets ton image ici
-                st.image("src/assets/louis.png", use_column_width=True)
-                # ou une URL :
-                # st.image("https://…/monimage.png", use_column_width=True)
+                # 3 sous-colonnes pour centrer l'image
+                c1, c2, c3 = st.columns([1, 6, 1])
+                with c2:
+                    st.image(image_path, width=800)
 
+                # 3 sous-colonnes pour centrer le texte
+                t1, t2, t3 = st.columns([1, 2, 1])
+                with t2:
+                    pluriel = nb_ev > 1
+                    texte = (
+                        f"Il y avait déjà <span style='color:#2ecc71; font-size:1.8rem; font-weight:800;'>{nb_ev}</span> espaces verts qui existent encore aujourd'hui."
+                        if pluriel
+                        else f"Il y avait déjà <span style='color:#2ecc71; font-size:1.8rem; font-weight:800;'>{nb_ev}</span> espace vert qui existe encore aujourd'hui."
+                    )
+                    st.markdown(
+                        f"""
+                        <p style="
+                            text-align:center;
+                            font-weight:600;
+                            font-size:1.1rem;
+                            margin-top:1.2rem;
+                        ">
+                            {texte}
+                        </p>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
+            with right_col:
+                if hist_geo.empty:
+                    st.warning("Aucun espace à afficher pour cette année.")
+                else:
+                    features = []
 
-            # filtrage par année
-            year_col = pd.to_numeric(df["annee_ouverture"], errors="coerce")
-            mask_year = year_col.notna() & (year_col <= selected_year)
-            hist_df = df[mask_year].copy()
+                    for _, row in hist_geo.iterrows():
+                        year_val = pd.to_numeric(row.get("annee_ouverture", None), errors="coerce")
+                        year_val = int(year_val) if pd.notna(year_val) else ""
+                        features.append({
+                            "type": "Feature",
+                            "properties": {
+                                "nom": row["nom"],
+                                "annee_ouverture": year_val,
+                                "fill_color": [46, 204, 113, 140],  # vert unique
+                            },
+                            "geometry": row["geometry"],
+                        })
 
-            hist_geo = hist_df[hist_df["geo_shape"].notna()].copy()
-            hist_geo["geometry"] = hist_geo["geo_shape"].apply(lambda x: json.loads(x) if pd.notna(x) else None)
-            hist_geo = hist_geo[hist_geo["geometry"].notna()]
+                    # ✅ tu avais oublié ça
+                    geojson_obj = {
+                        "type": "FeatureCollection",
+                        "features": features,
+                    }
 
-            nb_ev = len(hist_geo)
-            st.markdown(f"**{nb_ev} espaces verts étaient déjà ouverts à cette date.**")
+                    if {"latitude", "longitude"}.issubset(hist_geo.columns):
+                        geo_pts = hist_geo[hist_geo["latitude"].notna() & hist_geo["longitude"].notna()]
 
+                        if len(geo_pts) == 1:
+                            # un seul lieu -> on zoom fort dessus
+                            lat_center = float(geo_pts.iloc[0]["latitude"])
+                            lon_center = float(geo_pts.iloc[0]["longitude"])
+                            zoom_level = 14
+                        elif len(geo_pts) > 1:
+                            lat_min = geo_pts["latitude"].min()
+                            lat_max = geo_pts["latitude"].max()
+                            lon_min = geo_pts["longitude"].min()
+                            lon_max = geo_pts["longitude"].max()
 
-            if hist_geo.empty:
-                st.warning("Aucun espace à afficher pour cette année.")
-            else:
-                color_map = {
-                    "Bois": [0, 100, 0, 120],
-                    "Parc": [46, 204, 113, 120],
-                    "Square": [52, 152, 219, 120],
-                    "Jardin": [241, 196, 15, 120],
-                    "Jardin partage": [230, 126, 34, 120],
-                    "Pelouse": [39, 174, 96, 120],
-                    "Mail": [142, 68, 173, 120],
-                    "Promenade": [26, 188, 156, 120],
-                    "Terrain de boules": [192, 57, 43, 120],
-                    "Forêt urbaine": [0, 128, 0, 120],
-                    "Ile": [52, 73, 94, 120],
-                    "Cimetière": [149, 165, 166, 120],
-                }
+                            lat_center = (lat_min + lat_max) / 2
+                            lon_center = (lon_min + lon_max) / 2
 
-                features = []
-                for _, row in hist_geo.iterrows():
-                    fill = color_map.get(row["categorie"], [127, 140, 141, 120])
-                    year_val = pd.to_numeric(row.get("annee_ouverture", None), errors="coerce")
-                    year_val = int(year_val) if pd.notna(year_val) else ""
-                    features.append({
-                        "type": "Feature",
-                        "properties": {
-                            "nom": row["nom"],
-                            "categorie": row["categorie"],
-                            "annee_ouverture": year_val,
-                            "fill_color": fill,
-                        },
-                        "geometry": row["geometry"],
-                    })
+                            # on regarde à quel point c’est étalé pour adapter le zoom
+                            span = max(lat_max - lat_min, lon_max - lon_min)
+                            if span < 0.005:
+                                zoom_level = 14
+                            elif span < 0.01:
+                                zoom_level = 13
+                            elif span < 0.05:
+                                zoom_level = 12
+                            else:
+                                zoom_level = 11
+                        else:
+                            # pas de coordonnées exploitables → vue Paris
+                            lat_center = 48.8566
+                            lon_center = 2.3522
+                            zoom_level = 15
+                    else:
+                        # fallback si pas de colonnes latitude/longitude
+                        lat_center = 48.8566
+                        lon_center = 2.3522
+                        zoom_level = 11
 
-                geojson_obj = {"type": "FeatureCollection", "features": features}
+                    # si on est avant 1791 → zoom dynamique
+                    if selected_year < 1791 and {"latitude", "longitude"}.issubset(hist_geo.columns):
+                        pts = hist_geo[hist_geo["latitude"].notna() & hist_geo["longitude"].notna()]
+                        if len(pts) >= 1:
+                            lat_center = float(pts.iloc[0]["latitude"])
+                            lon_center = float(pts.iloc[0]["longitude"])
+                            zoom_level = 14
+                        else:
+                            # fallback paris
+                            lat_center = 48.8566
+                            lon_center = 2.3522
+                            zoom_level = 11
+                    else:
+                        # à partir de 1791 on garde le zoom paris
+                        lat_center = 48.8566
+                        lon_center = 2.3522
+                        zoom_level = 11
 
-                geojson_layer = pdk.Layer(
-                    "GeoJsonLayer",
-                    data=geojson_obj,
-                    get_fill_color="properties.fill_color",
-                    get_line_color=[0, 0, 0],
-                    line_width_min_pixels=1,
-                    pickable=True,
-                )
+                    view_state = pdk.ViewState(
+                        latitude=lat_center,
+                        longitude=lon_center,
+                        zoom=zoom_level,
+                        pitch=0,
+                    )
 
-                view_state = pdk.ViewState(
-                    latitude=48.8566,
-                    longitude=2.3522,
-                    zoom=11,
-                    pitch=0,
-                )
+                    geojson_layer = pdk.Layer(
+                        "GeoJsonLayer",
+                        data=geojson_obj,
+                        get_fill_color="properties.fill_color",
+                        get_line_color=[0, 0, 0],
+                        line_width_min_pixels=1,
+                        pickable=True,
+                    )
 
-                r = pdk.Deck(
-                    layers=[geojson_layer],
-                    initial_view_state=view_state,
-                    tooltip={"text": "{nom}\n{categorie}\nOuvert en {annee_ouverture}"},
-                )
+                    r = pdk.Deck(
+                        layers=[geojson_layer],
+                        initial_view_state=view_state,
+                        tooltip={"text": "{nom}\nOuvert en {annee_ouverture}"},  # 👈 plus de catégorie
+                    )
 
-                st.pydeck_chart(r)
+                    st.pydeck_chart(r)
+
 
 # ---------------------------------------------------------------------
 # 3. ONGLET DONNÉES
