@@ -307,18 +307,70 @@ with tab_carte_hist:
 
             # fonction de mapping année -> image
             def get_image_for_year(year: int) -> str:
-                # if year < 1700:
-                #     return "src/assets/avant-1700.jpg"
-                # elif year < 1789:
-                #     return "src/assets/ancien-regime.jpg"
-                # elif year < 1850:
-                #     return "src/assets/revolution.jpg"
-                # elif year < 1900:
-                #     return "src/assets/haussmann.jpg"
-                # else:
-                #     return "src/assets/paris-moderne.jpg"
+
+                # 1. 1688–1715 : Louis XIV
+                if year <= 1715:
+                    return "src/assets/louis-xiv.png"
+
+                # 2. 1716–1788 : Lumières
+                elif year <= 1788:
+                    return "src/assets/place-louis-xv.jpg"
+
+                # 3. 1789–1799 : Révolution
+                elif year <= 1799:
+                    return "src/assets/rev.jpg"
+
+                # 4. 1800–1815 : Premier Empire
+                elif year <= 1815:
+                    return "src/assets/napoleon.jpeg"
+
+                # 5. 1816–1852 : Restauration / Monarchie de Juillet
+                elif year <= 1852:
+                    return "src/assets/monarchie-de-juillet.jpg"
+
+                # 6. 1853–1870 : Haussmann
+                elif year <= 1870:
+                    return "src/assets/grands-boulevards.jpg"
+
+                # 7. 1871 : Commune
+                elif year == 1871:
+                    return "src/assets/commune-paris.jpg"
+
+                # 8. 1872–1900 : Belle Époque
+                elif year <= 1900:
+                    return "src/assets/eiffel.jpg"
+
+                # 9. 1901–1918 : modernité + WW1
+                elif year <= 1918:
+                    return "src/assets/paris-1916.jpg"
+
+                # 10. 1919–1939 : entre-deux-guerres
+                elif year <= 1939:
+                    return "src/assets/paris-1930.jpeg"
+
+                # 11. 1940–1944 : occupation
+                elif year <= 1944:
+                    return "src/assets/paris-1940.jpeg"
                 
-                return "src/assets/rev.jpg"
+                # 12. 1945 : libération
+                elif year <= 1945:
+                    return "src/assets/paris-liberation.jpeg"
+
+                # 13. 1946–1970 : reconstruction & modernisation
+                elif year <= 1970:
+                    return "src/assets/trente-glorieuses.jpg"
+
+                # 14. 1971–2000 : Paris contemporain
+                elif year <= 2000:
+                    return "src/assets/paris-1980.jpg"
+
+                # 15. 2001-2010 : Paris contemporain
+                elif year <= 2010:
+                    return "src/assets/paris-2000.jpeg"
+                
+                # 16. 2011–2025 : Paris durable
+                else:
+                    return "src/assets/paris-2025.jpg"
 
             image_path = get_image_for_year(selected_year)
 
