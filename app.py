@@ -22,7 +22,7 @@ def load_data():
 df = load_data()
 
 # =========================
-# 🏙️ arrondissement depuis le code postal (technique)
+# 🏙️ arrondissement depuis le code postal
 # =========================
 df["arrondissement"] = (
     df["code_postal"]
@@ -119,15 +119,15 @@ with tab_carte_typo:
 
     with col2:
         arrondissements_sel = st.multiselect(
-            "Arrondissement (technique)",
+            "Arrondissement",
             options=arrs,
             default=[],
-            placeholder="01, 02, ...",
+            placeholder="1er, 2e, ...",
         )
 
     with col3:
         h24_sel = st.selectbox(
-            "Ouverture 24/24",
+            "Ouverture 24h/24",
             options=["Tous", "Oui", "Non"],
             index=0,
         )
@@ -160,8 +160,6 @@ with tab_carte_typo:
         want_cloture = (cloture_sel == "Oui")
         filtered_df = filtered_df[filtered_df["presence_cloture"] == want_cloture]
 
-    st.caption(f"{len(filtered_df)} ligne(s) après filtrage.")
-
     # ===== KPI =====
     k1, k2, k3 = st.columns(3)
     k1.metric("Espaces affichés", len(filtered_df))
@@ -192,7 +190,7 @@ with tab_carte_typo:
     geo_df = geo_df[geo_df["geometry"].notna()]
 
     if geo_df.empty:
-        st.warning("Aucune géométrie exploitable dans les données filtrées.")
+        st.warning("Aucun espace vert ne correspond à vos critères de recherches.")
     else:
         color_map = {
             "Bois": [0, 100, 0, 120],
@@ -217,6 +215,8 @@ with tab_carte_typo:
                 "properties": {
                     "nom": row["nom"],
                     "categorie": row["categorie"],
+                    "ouverture_24h": "Oui" if row.get("ouverture_24h") else "Non",
+                    "presence_cloture": "Oui" if row.get("presence_cloture") else "Non",
                     "fill_color": fill,
                 },
                 "geometry": row["geometry"],
@@ -243,7 +243,9 @@ with tab_carte_typo:
         r = pdk.Deck(
             layers=[geojson_layer],
             initial_view_state=view_state,
-            tooltip={"text": "{nom}\n{categorie}"},
+            tooltip={
+                "text": "{nom}\n{categorie}\nOuvert 24h/24 : {ouverture_24h}\nClôturé : {presence_cloture}"
+            }
         )
 
         st.pydeck_chart(r)
@@ -269,20 +271,20 @@ with tab_carte_hist:
                 <style>
                 /* Centrage + largeur contrôlée */
                 div[data-baseweb="slider"] {
-                    width: 90% !important;   /* 👈 réduis la longueur (100% par défaut) */
-                    margin: 0 auto;          /* centre horizontalement */
+                    width: 90% !important;
+                    margin: 0 auto;
                 }
 
                 /* Barre de fond (inactive) */
                 .stSlider [role="presentation"] > div:first-child {
-                    height: 0.4rem !important;  /* 👈 épaisseur du fond */
+                    height: 0.4rem !important;
                     background-color: rgba(255, 255, 255, 0.15);
                 }
 
                 /* Barre active (valeur sélectionnée) */
                 .stSlider [role="presentation"] > div:nth-child(2) {
                     height: 0.4rem !important;
-                    background-color: #2ecc71 !important;  /* 👈 vert */
+                    background-color: #2ecc71 !important;
                 }
 
                 /* Bouton circulaire */
@@ -445,12 +447,11 @@ with tab_carte_hist:
                             "properties": {
                                 "nom": row["nom"],
                                 "annee_ouverture": year_val,
-                                "fill_color": [46, 204, 113, 140],  # vert unique
+                                "fill_color": [46, 204, 113, 140],
                             },
                             "geometry": row["geometry"],
                         })
 
-                    # ✅ tu avais oublié ça
                     geojson_obj = {
                         "type": "FeatureCollection",
                         "features": features,
@@ -531,7 +532,7 @@ with tab_carte_hist:
                     r = pdk.Deck(
                         layers=[geojson_layer],
                         initial_view_state=view_state,
-                        tooltip={"text": "{nom}\nOuvert en {annee_ouverture}"},  # 👈 plus de catégorie
+                        tooltip={"text": "{nom}\nOuvert en {annee_ouverture}"},
                     )
 
                     st.pydeck_chart(r)
