@@ -677,7 +677,7 @@ with tab_data:
     st.download_button(
         "⬇️ Télécharger les données (CSV)",
         data=view_df[export_cols].to_csv(index=False, sep=";"),
-        file_name="espaces_verts.csv",
+        file_name="espaces_verts_paris.csv",
         mime="text/csv",
     )
 
@@ -685,12 +685,138 @@ with tab_data:
 # 4. ONGLET STATISTIQUES
 # ---------------------------------------------------------------------
 with tab_stats:
+    import altair as alt
+
     st.subheader("📈 Statistiques")
-    counts = (
-        df["categorie"]
-        .value_counts()
-        .rename_axis("Catégorie")
+
+    # Palettes
+    green_palette = ["#2ecc71", "#27ae60", "#1e8449", "#16a085", "#58d68d"]
+    multi_palette = [
+        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
+        "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
+        "#bcbd22", "#17becf"
+    ]
+
+    # ------------- DONUT CHART -------------
+    st.markdown("## 🟩 Répartition du nombre d'espaces par catégorie")
+
+    cat_counts = df["categorie"].value_counts().reset_index()
+    cat_counts.columns = ["Catégorie", "Nb"]
+
+    donut = alt.Chart(cat_counts).mark_arc(innerRadius=70).encode(
+        theta="Nb:Q",
+        color=alt.Color("Catégorie:N", scale=alt.Scale(range=multi_palette)),
+        tooltip=["Catégorie", "Nb"]
+    )
+
+    st.altair_chart(donut, use_container_width=True)
+    st.divider()
+
+    # ------------- SURFACE PAR CATÉGORIE -------------
+    st.markdown("## 🌿 Surface totale par catégorie")
+
+    if "surface_totale_reelle_m2" in df.columns:
+        surf = df.groupby("categorie")["surface_totale_reelle_m2"].sum().reset_index()
+        surf.columns = ["Catégorie", "Surface totale"]
+
+        bars = alt.Chart(surf).mark_bar(color="#27ae60").encode(
+            x="Surface totale:Q",
+            y=alt.Y("Catégorie:N", sort="-x"),
+            tooltip=["Catégorie", "Surface totale"]
+        )
+        st.altair_chart(bars, use_container_width=True)
+    else:
+        st.info("Pas de surface disponible.")
+
+    st.divider()
+
+    # ------------- HEATMAP CAT × ARR -------------
+    st.markdown("## 🗺️ Répartition par arrondissement")
+
+    heat = (
+        df.groupby(["arrondissement_affiche", "categorie"])
+        .size()
         .reset_index(name="Nb")
     )
-    st.bar_chart(counts, x="Catégorie", y="Nb")
-    st.caption("Répartition simple par catégorie. On pourra ajouter la répartition par année / arrondissement.")
+
+    heatmap = alt.Chart(heat).mark_rect().encode(
+        x=alt.X("arrondissement_affiche:N", title="Arrondissement"),
+        y=alt.Y("categorie:N", title="Catégorie"),
+        color=alt.Color("Nb:Q", scale=alt.Scale(scheme="greens")),
+        tooltip=["arrondissement_affiche", "categorie", "Nb"]
+    )
+
+    st.altair_chart(heatmap, use_container_width=True)
+    st.divider()
+
+    # ------------- OUVERT 24H/24 PAR CAT -------------
+    st.markdown("## ⭐ Taux d'espaces ouverts 24h/24 par catégorie")
+
+    if "ouverture_24h" in df.columns:
+        open_rate = (
+            df.groupby("categorie")["ouverture_24h"]
+            .mean()
+            .reset_index()
+            .sort_values("ouverture_24h")
+        )
+        open_rate["Pourcentage"] = open_rate["ouverture_24h"] * 100
+
+        scatter = alt.Chart(open_rate).mark_circle(size=200, color="#1e8449").encode(
+            x=alt.X("Pourcentage:Q", title="% ouverts 24h/24"),
+            y=alt.Y("categorie:N", title="Catégorie", sort="-x"),
+            tooltip=["categorie", "Pourcentage"]
+        )
+        st.altair_chart(scatter, use_container_width=True)
+    else:
+        st.info("Données 24h/24 indisponibles.")
+
+    st.divider()
+
+    # ------------- COURBE + ZONE PAR DÉCENNIE -------------
+    st.markdown("## 🕰️ Nombre d'espaces créés par décennie")
+
+    if "annee_ouverture" in df.columns:
+        years = pd.to_numeric(df["annee_ouverture"], errors="coerce").dropna()
+        decades = ((years // 10) * 10).value_counts().sort_index().reset_index()
+        decades.columns = ["Décennie", "Nombre"]
+
+        # Filtrer pour éviter l'affichage inutile (max = dernière décennie réelle)
+        last_decade = decades["Décennie"].max()
+        decades = decades[decades["Décennie"] <= last_decade]
+
+        area = alt.Chart(decades).mark_area(
+            color="#2ecc71",
+            opacity=0.4
+        ).encode(
+            x=alt.X("Décennie:Q"),
+            y=alt.Y("Nombre:Q"),
+            tooltip=["Décennie", "Nombre"]
+        )
+
+        line = alt.Chart(decades).mark_line(color="#1e8449").encode(
+            x="Décennie:Q",
+            y="Nombre:Q"
+        )
+
+        st.altair_chart(area + line, use_container_width=True)
+    else:
+        st.info("Pas d'années d'ouverture.")
+
+    st.divider()
+
+    # ------------- BOX PLOT DES SURFACES -------------
+    st.markdown("## 📏 Distribution des surfaces par catégorie")
+
+    if "surface_totale_reelle_m2" in df.columns:
+        # Limiter à 300k pour visualisation
+        df_box = df.copy()
+        df_box["surface_totale_reelle_m2"] = df_box["surface_totale_reelle_m2"].clip(upper=300000)
+
+        box = alt.Chart(df_box).mark_boxplot(extent="min-max").encode(
+            x=alt.X("categorie:N", title="Catégorie"),
+            y=alt.Y("surface_totale_reelle_m2:Q", title="Surface (m²)", scale=alt.Scale(domain=[0, 300000])),
+            color=alt.Color("categorie:N", scale=alt.Scale(range=multi_palette)),
+        )
+        st.altair_chart(box, use_container_width=True)
+    else:
+        st.info("Pas de surfaces disponibles.")
